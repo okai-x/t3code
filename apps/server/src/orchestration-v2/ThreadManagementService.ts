@@ -328,7 +328,7 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
   "ThreadManagementBackgroundWaitError",
   {
     threadId: ThreadId,
-    reason: Schema.Literals(["unsupported", "unavailable", "failed"]),
+    reason: Schema.Literals(["unsupported", "unavailable", "no-match", "failed"]),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -338,6 +338,8 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
         return "This provider cannot mark background work as awaited.";
       case "unavailable":
         return "This thread has no live provider session.";
+      case "no-match":
+        return "None of these task IDs is background work on this thread, so nothing will wake it. Pass the task ID returned when the background work started.";
       case "failed":
         return "Failed to update the awaited background work.";
     }
@@ -1460,6 +1462,12 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
+    if (input.awaited && matched.length === 0) {
+      return yield* new ThreadManagementBackgroundWaitError({
+        threadId: input.threadId,
+        reason: "no-match",
+      });
+    }
     const matchedIds = new Set(matched);
     return { matched, unmatched: input.taskIds.filter((taskId) => !matchedIds.has(taskId)) };
   });
