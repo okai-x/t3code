@@ -3717,6 +3717,68 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect("copies ignored files named by .worktreeinclude into a new worktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fs = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        yield* writeTextFile(cwd, ".gitignore", ".env*\nnode_modules/\nsecrets/\nconfig/local/\n");
+        yield* writeTextFile(
+          cwd,
+          ".worktreeinclude",
+          ".env\napps/web/.env.local\nsecrets/\nconfig/local/*.json\nREADME.md\n",
+        );
+        yield* writeTextFile(cwd, "apps/web/index.ts", "export {};\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add ignore rules"]);
+        yield* writeTextFile(cwd, ".env", "ROOT=1\n");
+        yield* writeTextFile(cwd, ".env.example.local", "unmatched\n");
+        yield* writeTextFile(cwd, "apps/web/.env.local", "WEB=1\n");
+        yield* writeTextFile(cwd, "secrets/key.txt", "key\n");
+        yield* writeTextFile(cwd, "config/local/dev.json", "{}\n");
+        yield* writeTextFile(cwd, "config/local/notes.txt", "unmatched\n");
+        yield* writeTextFile(cwd, "node_modules/pkg/.env", "inside an ignored folder\n");
+        yield* writeTextFile(cwd, "README.md", "# edited in the source checkout\n");
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "included");
+
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/included",
+        });
+
+        const read = (relativePath: string) =>
+          fs
+            .readFileString(pathService.join(worktreePath, relativePath))
+            .pipe(Effect.orElseSucceed(() => null));
+        assert.deepStrictEqual(
+          {
+            env: yield* read(".env"),
+            webEnv: yield* read("apps/web/.env.local"),
+            secret: yield* read("secrets/key.txt"),
+            localJson: yield* read("config/local/dev.json"),
+            localNotes: yield* read("config/local/notes.txt"),
+            exampleEnv: yield* read(".env.example.local"),
+            nodeModulesEnv: yield* read("node_modules/pkg/.env"),
+            readme: yield* read("README.md"),
+          },
+          {
+            env: "ROOT=1\n",
+            webEnv: "WEB=1\n",
+            secret: "key\n",
+            localJson: "{}\n",
+            localNotes: null,
+            exampleEnv: null,
+            nodeModulesEnv: null,
+            readme: "# test\n",
+          },
+        );
+      }),
+    );
+
     it.effect("reads Changes totals with untracked files when requested", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
