@@ -186,6 +186,23 @@ itself, or **Skip** to leave them for a setup script. It resolves in the same or
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
 
+## Copy local files into worktrees
+
+New worktrees start without your ignored files, such as `.env`. To copy some of them in, list
+them in a `.worktreeinclude` file at the project root, using `.gitignore` patterns. This is the
+same file Claude Code, Codex and Conductor read:
+
+```gitignore
+.env
+apps/web/.env.local
+secrets/
+```
+
+T3 Code copies only files that Git ignores and that are not already in the new worktree. It
+copies them before setup scripts run. Symlinks are skipped. A pattern without a slash, like
+`.env`, does not look inside a folder that is ignored as a whole, like `node_modules`. To reach
+a file in such a folder, name its path, like `config/local/*.json`.
+
 ## Worktree location
 
 New worktrees go in the `worktrees` folder of the T3 home directory. To put them somewhere else,

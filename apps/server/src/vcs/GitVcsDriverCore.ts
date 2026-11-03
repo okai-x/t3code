@@ -21,6 +21,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import ignore from "ignore";
 
 import {
   GitCommandError,
@@ -316,6 +317,8 @@ function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
 
   return parts.filter((value) => value.length > 0);
 }
+
+const WORKTREE_INCLUDE_FILE_NAME = ".worktreeinclude";
 
 export function splitNullSeparatedGitStdoutPaths(
   result: Pick<GitVcsDriver.ExecuteGitResult, "stdout" | "stdoutTruncated">,
@@ -4154,6 +4157,73 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  // Claude Code, Codex and Conductor share this file for seeding worktrees with ignored local config.
+  const copyWorktreeIncludes = Effect.fn("GitVcsDriver.copyWorktreeIncludes")(function* (
+    sourceCwd: string,
+    worktreePath: string,
+  ) {
+    const patterns = yield* fileSystem
+      .readFileString(path.join(sourceCwd, WORKTREE_INCLUDE_FILE_NAME))
+      .pipe(Effect.orElseSucceed(() => null));
+    if (patterns === null) return;
+    const matcher = ignore().add(patterns);
+    const listIgnored = (args: ReadonlyArray<string>) =>
+      executeGit("GitVcsDriver.copyWorktreeIncludes.listIgnored", sourceCwd, [
+        "-c",
+        "core.fsmonitor=false",
+        "ls-files",
+        "-z",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        ...args,
+      ]).pipe(Effect.map(splitNullSeparatedGitStdoutPaths));
+    // --directory folds a wholly ignored folder like node_modules into one entry instead of walking it.
+    const entries = yield* listIgnored(["--directory", "--no-empty-directory"]);
+    const mentioned = patterns
+      .split(/\r?\n/)
+      .map((line) => line.trim().replace(/^\//, ""))
+      .filter((line) => line.length > 0 && !line.startsWith("#"));
+    // Only folders the file names are walked, so `config/local/*.json` works without listing node_modules.
+    const nested = yield* Effect.forEach(
+      entries.filter(
+        (entry) =>
+          entry.endsWith("/") &&
+          !matcher.ignores(entry) &&
+          mentioned.some((line) => line.startsWith(entry)),
+      ),
+      (folder) => listIgnored(["--", folder]),
+    );
+    const selected = [...entries, ...nested.flat()].filter((entry) => matcher.ignores(entry));
+    if (selected.length === 0) return;
+    const prefix = (yield* runGitStdout("GitVcsDriver.copyWorktreeIncludes.prefix", sourceCwd, [
+      "rev-parse",
+      "--show-prefix",
+    ])).trim();
+    yield* Effect.forEach(
+      selected,
+      (entry) => {
+        const relativePath = entry.replace(/\/$/, "");
+        const source = path.join(sourceCwd, relativePath);
+        const target = path.join(worktreePath, prefix, relativePath);
+        return Effect.gen(function* () {
+          if ((yield* fileSystem.lstat(source)).type === "SymbolicLink") return;
+          if (yield* fileSystem.exists(target)) return;
+          yield* fileSystem.makeDirectory(path.dirname(target), { recursive: true });
+          yield* fileSystem.copy(source, target);
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("could not copy a .worktreeinclude file into the worktree", {
+              path: relativePath,
+              cause,
+            }),
+          ),
+        );
+      },
+      { concurrency: 8, discard: true },
+    );
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
@@ -4318,6 +4388,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }),
       );
     }
+
+    yield* copyWorktreeIncludes(input.cwd, worktreePath).pipe(
+      Effect.catchTags({
+        GitCommandError: (cause) =>
+          Effect.logWarning(".worktreeinclude files were not copied into the worktree", { cause }),
+      }),
+    );
 
     const newRefName = input.newRefName;
     if (newRefName && base) {
