@@ -39,9 +39,8 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
           {fullAccessOverrideExplanation(approval.fullAccessOverride)}
         </p>
       ) : null}
-      <div className="mt-2 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap justify-end gap-2">
         <ComposerPendingApprovalActions
-          presentation="inline"
           requestId={approval.requestId}
           isResponding={responding}
           canRespond={approval.responseCapability === "live"}
