@@ -33,7 +33,13 @@ describe("standard painted theme colors", () => {
           ["--background", "canvas"],
           ["--card", "surface"],
           ["--surface-raised", "surfaceRaised"],
+          ["--popover", "surfaceOverlay"],
           ["--message-surface", "messageSurface"],
+          ["--muted-foreground", "mutedForeground"],
+          ["--sidebar", "sidebar"],
+          ["--sidebar-row-hover", "sidebarRowHover"],
+          ["--sidebar-row-active", "sidebarRowActive"],
+          ["--sidebar-row-selected", "sidebarRowSelected"],
         ] as const) {
           const expected = toRgb(colors[role])!;
           const painted = paintedChannels(variable, canvas);

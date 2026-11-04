@@ -398,21 +398,65 @@ export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors
   if (appearance === "dark") {
     return (standardDarkThemeColors ??= decodeThemeColors({
       ...T3_CODE_DARK_THEME_COLORS,
+      ...STANDARD_WEB_THEME_COLORS.dark,
       canvas: "#000000",
     }));
   }
-  return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_LIGHT_THEME_COLORS));
+  return (standardLightThemeColors ??= decodeThemeColors({
+    ...T3_CODE_LIGHT_THEME_COLORS,
+    ...STANDARD_WEB_THEME_COLORS.light,
+  }));
 }
 
-// index.css paints the light bubble a step darker than the shared palette mobile uses.
-const STANDARD_WEB_PAINTED_COLORS: Record<ThemeAppearance, Partial<ThemeColors>> = {
-  light: { messageSurface: "#ebebed" },
-  dark: { canvas: "#000000", messageSurface: "#1e1e1e" },
+// Match index.css without changing the shared palette used by native mobile.
+const STANDARD_WEB_THEME_COLORS: Record<ThemeAppearance, Partial<ThemeColors>> = {
+  light: {
+    surfaceRaised: "#ffffff",
+    textMuted: "#62626b",
+    mutedForeground: "#62626b",
+    placeholder: "#62626b",
+    secondaryLabel: "#62626b",
+    iconMuted: "#62626b",
+    messageSurface: "#ebebed",
+    sidebar: "#f5f5f6",
+    sidebarMutedForeground: "#62626b",
+    sidebarRowHover: "#ebebed",
+    sidebarRowActive: "#e4e4e7",
+    sidebarRowSelected: "#e4e4e7",
+  },
+  dark: {
+    chrome: "#000000",
+    toolbar: "#000000",
+    toolbarBorder: "#2a2a2a",
+    toolbarControl: "#202020",
+    toolbarControlHover: "#292929",
+    surface: "#141414",
+    surfaceRaised: "#181818",
+    surfaceOverlay: "#202020",
+    textMuted: "#a3a3a3",
+    border: "#2a2a2a",
+    input: "#414141",
+    secondary: "#181818",
+    muted: "#181818",
+    mutedForeground: "#a3a3a3",
+    placeholder: "#a3a3a3",
+    secondaryLabel: "#a3a3a3",
+    iconMuted: "#a3a3a3",
+    accentSurface: "#292929",
+    messageSurface: "#242424",
+    codeBackground: "#121212",
+    sidebarControlSurface: "#141414",
+    sidebarRowHover: "#151515",
+    sidebarRowActive: "#202020",
+    sidebarRowSelected: "#252525",
+    sidebarBorder: "#2a2a2a",
+    terminalBackground: "#000000",
+  },
 };
 
 /** The standard theme as index.css paints it, for solves that measure the page. */
 export function getStandardPaintedThemeColors(appearance: ThemeAppearance): ThemeColors {
-  return { ...getStandardThemeColors(appearance), ...STANDARD_WEB_PAINTED_COLORS[appearance] };
+  return getStandardThemeColors(appearance);
 }
 
 type ThemeRgbColor = {
