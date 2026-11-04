@@ -133,7 +133,7 @@ import { AsyncResult } from "effect/reactivity";
 import { isElectron } from "../env";
 import { useDiffPanelStore } from "../diffPanelStore";
 import { useActiveThreadRef } from "../hooks/useActiveThreadRef";
-import { composerRequiresModifier } from "../composer-logic";
+import { composerRequiresModifier, formatAssistantCitationForComposer } from "../composer-logic";
 import {
   derivePhase,
   deriveActiveWorkStartedAt,
@@ -2828,6 +2828,10 @@ export default function ChatView(props: ChatViewProps) {
                 : null;
   const openSideChatStable = useStableCallback(() => void sideChat.open());
   const sendSideChatStable = useStableCallback((prompt: string) => sideChat.open(prompt));
+  const sideChatAssistantTextStable = useStableCallback(
+    (citation: AssistantCitation) =>
+      void sideChat.open(undefined, formatAssistantCitationForComposer(citation)),
+  );
   const { onConfirmRevertStable, onForkFromRunStable, onRevertTimelineTurnStable } =
     useTimelineRewind({
       environmentId,
@@ -3440,6 +3444,11 @@ export default function ChatView(props: ChatViewProps) {
                   citationRequest={citationRequest}
                   citationHistory={citationHistory}
                   onCiteAssistantText={citeAssistantTextStable}
+                  onSideChatAssistantText={
+                    sideChat.available && sideChatDisabledReason === null
+                      ? sideChatAssistantTextStable
+                      : undefined
+                  }
                   {...(activeProject
                     ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }
                     : {})}

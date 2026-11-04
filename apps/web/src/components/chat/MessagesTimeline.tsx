@@ -225,6 +225,7 @@ interface MessagesTimelineProps {
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
   ) => boolean;
+  onSideChatAssistantText?: ((citation: AssistantCitation) => void) | undefined;
   isWorking: boolean;
   runlessWorkActive?: boolean;
   activeTurnStartedAt?: string | null;
@@ -338,6 +339,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   citationRequest = null,
   citationHistory = CITED_HISTORY_LOADING,
   onCiteAssistantText,
+  onSideChatAssistantText,
   isWorking,
   runlessWorkActive = false,
   activeTurnStartedAt = null,
@@ -1317,6 +1319,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 viewport={timelineViewportElement}
                 threadRef={citationThreadRef}
                 onCite={onCiteAssistantText}
+                onSideChat={onSideChatAssistantText}
               />
             ) : null}
             <LegendList<MessagesTimelineRow>

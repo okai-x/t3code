@@ -20,8 +20,8 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 /**
  * Starts side chats from `threadRef`, or offers none when it is null. `open` forks the
  * thread's latest stable point, sends `prompt` there with `readSettings()`, the parent
- * composer's settings, and shows the tab. It resolves false when the side chat did not
- * start, or another one is still starting.
+ * composer's settings (or leaves `draft` unsent in its composer), and shows the tab. It
+ * resolves false when the side chat did not start, or another one is still starting.
  */
 export function useSideChat(input: {
   readonly threadRef: ScopedThreadRef | null;
@@ -48,7 +48,11 @@ export function useSideChat(input: {
     const error = squashAtomCommandFailure(failure);
     input.onError(error instanceof Error ? error.message : fallback);
   };
-  const start = async (threadRef: ScopedThreadRef, prompt: string | undefined) => {
+  const start = async (
+    threadRef: ScopedThreadRef,
+    prompt: string | undefined,
+    draft: string | undefined,
+  ) => {
     const { runtimeMode, modelSelection } = input.readSettings();
     const targetThreadId = newThreadId();
     const fork = await forkSideChat({
@@ -108,17 +112,19 @@ export function useSideChat(input: {
         discard();
         return false;
       }
-    } else if (modelSelection !== undefined) {
-      useComposerDraftStore.getState().setModelSelection(targetRef, modelSelection);
+    } else {
+      const composerDrafts = useComposerDraftStore.getState();
+      if (modelSelection !== undefined) composerDrafts.setModelSelection(targetRef, modelSelection);
+      if (draft) composerDrafts.setPrompt(targetRef, draft);
     }
     useRightPanelStore.getState().openSideChat(threadRef, targetThreadId);
     return true;
   };
-  const open = async (prompt?: string) => {
+  const open = async (prompt?: string, draft?: string) => {
     const { threadRef } = input;
     if (!threadRef || pendingRef.current) return false;
     pendingRef.current = true;
-    return start(threadRef, prompt).finally(() => {
+    return start(threadRef, prompt, draft).finally(() => {
       pendingRef.current = false;
     });
   };
