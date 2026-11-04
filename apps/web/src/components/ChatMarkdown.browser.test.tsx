@@ -267,6 +267,10 @@ describe("ChatMarkdown streaming", () => {
     await act(async () => runButtons()[0]!.click());
     expect(onRunShellCommand).toHaveBeenCalledExactlyOnceWith("echo hello");
 
+    await rerender(message("```bash\nhermes install \\\n  --name x -y\n```"));
+    await act(async () => runButtons()[0]!.click());
+    expect(onRunShellCommand).toHaveBeenLastCalledWith("hermes install \\\n  --name x -y");
+
     for (const text of [
       "~~~bash\necho tilde\n~~~",
       "> ```bash\n> echo quote\n> ```",
@@ -284,6 +288,8 @@ describe("ChatMarkdown streaming", () => {
       "```bash\n\n```",
       "```bash\necho hello\n\n```",
       "```bash\necho hello\\\n```",
+      "```bash\necho one \\\n\necho two\n```",
+      "```powershell\necho one \\\necho two\n```",
       "```bash\necho safe \u202e#\n```",
       "```bash\necho incomplete",
       "~~~bash\necho incomplete",
