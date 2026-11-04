@@ -58,6 +58,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 
   return (
     <div
+      data-sidebar-chrome-header
       className={cn(
         "relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 pr-3",
         isElectron && "drag-region",
@@ -71,7 +72,10 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           aria-label="Toggle main sidebar"
         />
       </div>
-      <div className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5">
+      <div
+        data-sidebar-brand-row
+        className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5"
+      >
         <div className="flex shrink-0 items-center gap-1">
           <SidebarBrand onBackdrop={backdropVariant !== null} />
           {isElectron ? (
@@ -82,7 +86,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           ) : null}
         </div>
         {pillLabel ? (
-          <div className="ml-1 flex h-7 items-center">
+          <div data-sidebar-stage-label className="ml-1 flex h-7 items-center">
             <Badge data-environment-identification="pill" size="sm" variant="secondary">
               {pillLabel}
             </Badge>
@@ -166,6 +170,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
   return (
     <Link
       aria-label="T3 Code home"
+      data-sidebar-brand
       className={cn(
         "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex",
         onBackdrop ? "text-white" : "text-foreground",
@@ -179,15 +184,36 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
 
 function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
   return (
-    <span className="inline-flex min-w-0 items-baseline gap-1 text-sm font-medium tracking-tight">
-      <T3Wordmark aria-label="T3" className="h-[1cap] w-auto shrink-0" />
-      <span
-        className={cn(
-          "truncate [text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:py-1",
-          onBackdrop ? "text-white/70" : "text-muted-foreground",
-        )}
-      >
-        Code
+    <span
+      data-sidebar-brand-mark
+      className="inline-flex min-w-0 items-baseline gap-1 text-sm font-medium tracking-tight"
+    >
+      <svg aria-hidden className="sidebar-grove-emblem" fill="none" viewBox="0 0 32 40">
+        <path
+          d="M16 36V14M16 29 7 20M16 22l9-9"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeWidth="1.5"
+        />
+        <path d="M16 29C6 30 2 23 3 17c8-1 14 3 13 12Z" fill="currentColor" />
+        <path d="M16 22c-1-9 5-15 13-14 1 8-4 15-13 14Z" fill="currentColor" />
+        <path d="M16 15C9 12 9 5 13 2c6 2 9 8 3 13Z" fill="var(--app-theme-message-action)" />
+      </svg>
+      <span data-sidebar-brand-type className="inline-flex items-baseline gap-1">
+        <span className="inline-flex items-baseline gap-1">
+          <T3Wordmark aria-label="T3" className="h-[1cap] w-auto shrink-0" />
+          <span
+            className={cn(
+              "truncate [text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:py-1",
+              onBackdrop ? "text-white/70" : "text-muted-foreground",
+            )}
+          >
+            Code
+          </span>
+        </span>
+        <span aria-hidden className="sidebar-grove-caption">
+          Grove
+        </span>
       </span>
     </span>
   );
