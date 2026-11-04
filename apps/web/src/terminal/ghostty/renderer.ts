@@ -1,3 +1,4 @@
+import { readableThemeColorOn } from "../../themePalette";
 import {
   GHOSTTY_CELL_WIDE,
   ghosttyColorsEqual,
@@ -20,15 +21,37 @@ export interface GhosttyCellRange {
 const DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
 const POWERLINE_SOLID_RIGHT = "\ue0b0";
 const POWERLINE_SOLID_LEFT = "\ue0b2";
+const foregroundCaches = new WeakMap<CanvasRenderingContext2D, Map<string, string>>();
 
 function cssColor(color: GhosttyColor): string {
   return `rgb(${color.r}, ${color.g}, ${color.b})`;
+}
+
+function isTerminalGraphic(text: string): boolean {
+  const codepoint = text.codePointAt(0) ?? 0;
+  return codepoint >= 0x2500 && codepoint <= 0x259f;
+}
+
+function textColor(cell: GhosttyCell, cache: Map<string, string>): string {
+  const foreground = cssColor(cell.foreground);
+  // Box drawing and block glyphs carry application artwork, not readable text.
+  if (isTerminalGraphic(cell.text)) return foreground;
+  const background = cssColor(cell.background);
+  const key = `${foreground}/${background}`;
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  const color = readableThemeColorOn(foreground, background, 4.5);
+  if (cache.size >= 4096) cache.clear();
+  cache.set(key, color);
+  return color;
 }
 
 function sameTextStyle(left: GhosttyCell, right: GhosttyCell): boolean {
   // Selection only tints the background; splitting text runs shifts glyph spacing when advances differ from cell width.
   return (
     ghosttyColorsEqual(left.foreground, right.foreground) &&
+    ghosttyColorsEqual(left.background, right.background) &&
+    isTerminalGraphic(left.text) === isTerminalGraphic(right.text) &&
     left.bold === right.bold &&
     left.italic === right.italic &&
     left.invisible === right.invisible
@@ -141,6 +164,11 @@ export function renderGhosttySnapshot(options: {
     cursorOn,
     previousCursorY,
   } = options;
+  let foregroundCache = foregroundCaches.get(context);
+  if (!foregroundCache) {
+    foregroundCache = new Map();
+    foregroundCaches.set(context, foregroundCache);
+  }
   const focused = options.focused ?? true;
   const selectionBackground = options.selectionBackground ?? DEFAULT_SELECTION_BACKGROUND;
   const hoveredLinkRange = options.hoveredLinkRange ?? null;
@@ -246,7 +274,7 @@ export function renderGhosttySnapshot(options: {
         );
         context.clip();
         context.font = fontForCell(first, fontSize, fontFamily);
-        context.fillStyle = cssColor(first.foreground);
+        context.fillStyle = textColor(first, foregroundCache);
         context.fillText(
           text,
           padding + runStart * metrics.width,
@@ -269,7 +297,7 @@ export function renderGhosttySnapshot(options: {
       if (!cell || (!cell.underline && !cell.strikethrough && !cell.overline && !hoveredLink)) {
         continue;
       }
-      context.fillStyle = cssColor(cell.foreground);
+      context.fillStyle = textColor(cell, foregroundCache);
       const left = padding + column * metrics.width;
       if (cell.underline || hoveredLink) {
         context.fillRect(left, top + metrics.height - 2, metrics.width, 1);
