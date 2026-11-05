@@ -166,20 +166,19 @@ export function MarkdownCodeBlock({
   const [wrapped, setWrapped] = useState(() => getClientSettings().wordWrap);
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
   const copyLabel = copied ? "Copied" : "Copy code";
-  const command = code.trim();
+  const command = code.slice(0, -1);
   const isPosixShell = /^(?:sh|bash|zsh|fish|shell)$/.test(language);
-  // POSIX shells join backslash-newline into one command; PowerShell does not.
-  const singleCommand = isPosixShell ? code.slice(0, -1).replaceAll("\\\n", "") : code.slice(0, -1);
+  const controlText = isPosixShell ? command.replaceAll("\n", "") : command;
   const canRun =
     onRunShellCommand !== undefined &&
     !isStreaming &&
     (isPosixShell || /^(?:powershell|pwsh)$/.test(language)) &&
     code.endsWith("\n") &&
-    command.length > 0 &&
-    !command.endsWith("\\") &&
+    command.trim().length > 0 &&
+    !command.trimEnd().endsWith("\\") &&
     // Control and invisible format characters (bidi overrides, zero-width) can
     // make the rendered command differ from what the terminal would receive.
-    !/[\p{Cc}\p{Cf}]/u.test(singleCommand);
+    !/[\p{Cc}\p{Cf}]/u.test(controlText);
 
   const handleCopy = () => copyToClipboard(code);
 
