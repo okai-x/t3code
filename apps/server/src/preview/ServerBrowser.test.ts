@@ -174,6 +174,7 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
     off: (name: string, callback: (...args: unknown[]) => void) => events.off(name, callback),
     emit: (name: string, ...args: unknown[]) => events.emit(name, ...args),
     nativeFileChooser,
+    mouse: { click: vi.fn(async () => {}), move: vi.fn(async () => {}) },
     setChooserFiles,
     openFileChooser: () => {
       if (
@@ -463,6 +464,72 @@ beforeEach(() => {
   releasedDesktopTabs.length = 0;
   desktopConnections.length = 0;
 });
+
+it.effect.each(["blur", "cancel", "takeover"])(
+  "a desktop click waits for host input and handles %s before dispatch",
+  (outcome) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        desktopRendersNext = true;
+        const { browser, broker, tabId } = yield* ready;
+        const context = desktopConnections[0]!.context;
+        const { page, sessions } = context;
+        const waiting = Promise.withResolvers<void>();
+        const released = Promise.withResolvers<Record<string, unknown>>();
+        const newSession = context.newCDPSession;
+        context.newCDPSession = async (target) => {
+          const cdp = await newSession(target);
+          const send = cdp.send.getMockImplementation()!;
+          cdp.send.mockImplementation((method, input) => {
+            if (method === "T3.waitForHostInput") {
+              waiting.resolve();
+              return released.promise;
+            }
+            return send(method, input);
+          });
+          return cdp;
+        };
+        yield* Effect.addFinalizer(() => Effect.sync(() => released.resolve({})));
+        const click = yield* broker
+          .invoke({ scope, tabId, operation: "click", input: { x: 30, y: 30 } })
+          .pipe(Effect.exit, Effect.forkScoped);
+        yield* Effect.raceFirst(
+          Effect.promise(() => waiting.promise),
+          Fiber.join(click).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                throw new Error("Click finished before host input was released");
+              }),
+            ),
+          ),
+        );
+        expect(page.mouse.click).not.toHaveBeenCalled();
+        if (outcome === "takeover") {
+          const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+          yield* viewer.input({ type: "takeControl" });
+          yield* viewer.input({ type: "mouse", action: "down", x: 10, y: 20, button: "left" });
+          expect(sessions.at(-1)!.send).toHaveBeenCalledWith(
+            "Input.dispatchMouseEvent",
+            expect.objectContaining({ type: "mousePressed", x: 10, y: 20 }),
+          );
+        } else if (outcome === "cancel")
+          released.reject(new Error("The host input wait was cancelled."));
+        else released.resolve({});
+        const result = yield* Fiber.join(click);
+        if (outcome === "blur") {
+          expect(Exit.isSuccess(result)).toBe(true);
+          expect(page.mouse.click).toHaveBeenCalledExactlyOnceWith(30, 30, {
+            button: "left",
+            clickCount: 1,
+          });
+        } else {
+          expect(Exit.isFailure(result)).toBe(true);
+          expect(page.mouse.click).not.toHaveBeenCalled();
+        }
+        expect(sessions[1]!.detach).toHaveBeenCalledOnce();
+      }),
+    ).pipe(Effect.provide(layer)),
+);
 
 it.live("tells the desktop once per thread when its agent turns start and end", () =>
   Effect.gen(function* () {
