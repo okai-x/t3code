@@ -293,6 +293,7 @@ interface ServerTab {
   readonly actionTimeline: Array<PreviewAutomationActionEvent>;
   readonly control: SessionControl;
   agentOperating: boolean;
+  hostInputWait: AbortController | null;
   fileChooserIntercepted: boolean;
   readonly onFileChooser: (chooser: FileChooser) => void;
 
@@ -838,9 +839,10 @@ const make = Effect.gen(function* () {
     if (!desktop) await recordCopies(cdp);
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
-    const control = new SessionControl(snapshot.automationOwner ?? null, () =>
-      ServerBrowserPage.invalidateRefs(page),
-    );
+    const control = new SessionControl(snapshot.automationOwner ?? null, () => {
+      tab.hostInputWait?.abort(new BrowserControlInterrupted());
+      ServerBrowserPage.invalidateRefs(page);
+    });
     let pendingFileChooserOffer = Promise.resolve();
     const tab: ServerTab = {
       threadId: ThreadId.make(snapshot.threadId),
@@ -856,6 +858,7 @@ const make = Effect.gen(function* () {
       actionTimeline: [],
       control,
       agentOperating: false,
+      hostInputWait: null,
       fileChooserIntercepted: false,
       onFileChooser: (chooser) => {
         pendingFileChooserOffer = pendingFileChooserOffer
@@ -1936,6 +1939,7 @@ const make = Effect.gen(function* () {
   const runOperation = async (
     request: PreviewAutomationRequest,
     deadlineMs: number,
+    signal: AbortSignal,
   ): Promise<unknown> => {
     const input = request.input;
     switch (request.operation) {
@@ -2143,6 +2147,70 @@ const make = Effect.gen(function* () {
         tab.agentOperating = !READ_OPERATIONS.has(request.operation);
         updateFileChooserInterception(tab);
         try {
+          if (tab.desktop && ["click", "hover", "drag"].includes(request.operation)) {
+            const navigationGeneration = tab.navigationGeneration;
+            const controller = new AbortController();
+            tab.hostInputWait = controller;
+            const timeoutMs = Math.max(0, Math.ceil(deadlineMs - performance.now()));
+            const cancelled = AbortSignal.any([
+              signal,
+              controller.signal,
+              AbortSignal.timeout(timeoutMs),
+            ]);
+            const interrupted = Promise.withResolvers<never>();
+            const onAbort = () => interrupted.reject(cancelled.reason);
+            let desktopCdp: CDPSession | undefined;
+            try {
+              cancelled.throwIfAborted();
+              // A separate relay session lets a control handoff cancel just this readiness wait.
+              desktopCdp = await tab.page.context().newCDPSession(tab.page);
+              cancelled.throwIfAborted();
+              cancelled.addEventListener("abort", onAbort, { once: true });
+              await Promise.race([
+                (
+                  desktopCdp as CDPSession & {
+                    send(
+                      method: "T3.waitForHostInput",
+                      params: { timeoutMs: number },
+                    ): Promise<unknown>;
+                  }
+                ).send("T3.waitForHostInput", { timeoutMs }),
+                interrupted.promise,
+              ]);
+              cancelled.throwIfAborted();
+            } finally {
+              cancelled.removeEventListener("abort", onAbort);
+              tab.hostInputWait = null;
+              await desktopCdp?.detach().catch(constVoid);
+            }
+            signal.throwIfAborted();
+            if (
+              tab.closing ||
+              navigationGeneration !== tab.navigationGeneration ||
+              generation !== tab.control.generation ||
+              !tab.control.agentCanActNow(agentSessionId)
+            ) {
+              throw new BrowserControlInterrupted();
+            }
+            const remaining = deadlineMs - performance.now();
+            if (remaining <= 0) {
+              throw new DOMException(
+                "This browser request expired while waiting for host input.",
+                "TimeoutError",
+              );
+            }
+            const pointerInput = request.input as
+              | PreviewAutomationClickInput
+              | PreviewAutomationHoverInput
+              | PreviewAutomationDragInput;
+            return await executeTabOperation(tab, {
+              ...request,
+              input: {
+                ...pointerInput,
+                timeoutMs: Math.min(pointerInput.timeoutMs ?? remaining, remaining),
+              },
+            });
+          }
           return await executeTabOperation(tab, request);
         } finally {
           tab.agentOperating = false;
@@ -2249,8 +2317,8 @@ const make = Effect.gen(function* () {
 
   const handleRequest = (connectionId: string, request: PreviewAutomationRequest) =>
     Effect.tryPromise({
-      try: () =>
-        runOperation(request, performance.now() + request.timeoutMs).finally(() =>
+      try: (signal) =>
+        runOperation(request, performance.now() + request.timeoutMs, signal).finally(() =>
           markUsed(request),
         ),
       catch: ServerBrowserPage.toOperationError,

@@ -59,7 +59,11 @@ interface AttachedTab {
   /** Each pending command, by the extra session waiting on it; the main connection's have none. */
   readonly focusPending: Map<
     object,
-    { readonly owner: string | undefined; readonly paints: boolean }
+    {
+      readonly owner: string | undefined;
+      readonly paints: boolean;
+      readonly controller: AbortController;
+    }
   >;
   /** Whether the client keeps the guest painting, as published on `painting`. */
   painting: boolean;
@@ -238,15 +242,20 @@ export const make = Effect.gen(function* () {
     tab: AttachedTab,
     method: string,
     owner: string | undefined,
-    work: () => Promise<A>,
+    work: (signal: AbortSignal) => Promise<A>,
   ) => {
     const pending = {};
-    tab.focusPending.set(pending, { owner, paints: method === "Page.captureScreenshot" });
+    const controller = new AbortController();
+    tab.focusPending.set(pending, {
+      owner,
+      paints: method === "Page.captureScreenshot",
+      controller,
+    });
     tab.focusUses += 1;
     setFocusEmulation(tab, true);
     releaseFocusWhenIdle(tab);
     syncPainting(tab);
-    return work().finally(() => {
+    return work(controller.signal).finally(() => {
       if (!tab.focusPending.delete(pending)) return;
       tab.focusUses += 1;
       releaseFocusWhenIdle(tab);
@@ -260,6 +269,7 @@ export const make = Effect.gen(function* () {
    * nothing pending from the old one. A released relay's screencast has no viewer to stop it.
    */
   const dropFocusHolds = (tab: AttachedTab) => {
+    for (const hold of tab.focusPending.values()) hold.controller.abort();
     tab.focusPending.clear();
     releaseFocusWhenIdle(tab);
     syncPainting(tab);
@@ -276,7 +286,10 @@ export const make = Effect.gen(function* () {
   const dropSessionHolds = (tab: AttachedTab, owner: string) => {
     tab.screencasts.delete(owner);
     for (const [pending, hold] of tab.focusPending) {
-      if (hold.owner === owner) tab.focusPending.delete(pending);
+      if (hold.owner === owner) {
+        hold.controller.abort();
+        tab.focusPending.delete(pending);
+      }
     }
     releaseFocusWhenIdle(tab);
     syncPainting(tab);
@@ -301,8 +314,14 @@ export const make = Effect.gen(function* () {
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
     const { webContents, debugger: debuggee } = tab.debuggee;
-    const send = (method: string, params: Record<string, unknown>, sessionId?: string) =>
-      sendPageCommand(webContents, debuggee, method, params, sessionId);
+    const send = (
+      method: string,
+      params: Record<string, unknown>,
+      sessionId: string | undefined,
+      signal: AbortSignal | undefined,
+      protectHostInput: boolean,
+    ) =>
+      sendPageCommand(webContents, debuggee, method, params, sessionId, signal, protectHostInput);
     const detachedOwners = new Set<string>();
     /** Viewers and recordings stream; the agent's own sessions never do. */
     const streamingOwners = new Set<string>();
@@ -324,12 +343,18 @@ export const make = Effect.gen(function* () {
             tab.agentUsed = true;
           }
           // Waits for focus emulation; insertText and other non-CDP input would not queue behind it.
-          const forward = (current?: () => boolean) => {
+          const forward = (signal?: AbortSignal, current?: () => boolean) => {
             const change = tab.focusChange;
             const run = () =>
-              tab.relay === relay && (current === undefined || current())
-                ? send(method, params, sessionId)
-                : Promise.reject(new Error("The page this screenshot was for has moved on."));
+              tab.relay === relay && !signal?.aborted && (current === undefined || current())
+                ? send(
+                    method,
+                    params,
+                    sessionId,
+                    signal,
+                    owner === undefined || !streamingOwners.has(owner),
+                  )
+                : Promise.reject(new Error("The browser request is no longer active."));
             return change === null ? run() : change.then(run);
           };
           return method === "Page.captureScreenshot"
@@ -338,7 +363,9 @@ export const make = Effect.gen(function* () {
                 relay,
                 () => owner === undefined || !detachedOwners.has(owner),
                 (current, held) =>
-                  held ? holdFocus(tab, method, owner, () => forward(current)) : forward(current),
+                  held
+                    ? holdFocus(tab, method, owner, (signal) => forward(signal, current))
+                    : forward(undefined, current),
               )
             : method === "Page.startScreencast"
               ? holdFocus(tab, method, owner, forward).catch((cause: unknown) => {
@@ -410,6 +437,7 @@ export const make = Effect.gen(function* () {
     if (!tab) return;
     tabs.delete(id);
     tab.relay = null;
+    dropFocusHolds(tab);
     tab.debuggee.debugger.off("message", tab.onMessage);
     tab.debuggee.webContents.off("did-navigate", tab.onNewDocument);
     syncPainting(tab);
