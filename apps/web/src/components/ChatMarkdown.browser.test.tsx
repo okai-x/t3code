@@ -247,7 +247,7 @@ describe("ChatMarkdown favicon privacy", () => {
 });
 
 describe("ChatMarkdown streaming", () => {
-  it("runs only a complete single-line shell block after a click", async () => {
+  it("runs complete shell blocks after a click, including heredocs", async () => {
     setup();
     const onRunShellCommand = vi.fn();
     const message = (text: string, isStreaming = false) => (
@@ -271,26 +271,41 @@ describe("ChatMarkdown streaming", () => {
     await act(async () => runButtons()[0]!.click());
     expect(onRunShellCommand).toHaveBeenLastCalledWith("hermes install \\\n  --name x -y");
 
+    const heredoc = [
+      "python3 - <<'PY'",
+      "rows = [('task', '/tmp/delivery')]",
+      "",
+      "for name, path in rows:",
+      "    print(f'{name}\\n{path}\\n')",
+      "PY",
+    ].join("\n");
+    await rerender(message(`\`\`\`bash\n${heredoc}\n\`\`\``));
+    expect(runButtons()).toHaveLength(1);
+    await act(async () => runButtons()[0]!.click());
+    expect(onRunShellCommand).toHaveBeenLastCalledWith(heredoc);
+
     for (const text of [
       "~~~bash\necho tilde\n~~~",
       "> ```bash\n> echo quote\n> ```",
       "````bash\necho four\n````",
       "- Command\n\n  ```bash\n  echo list\n  ```",
       "```bash\r\necho crlf\r\n```\r",
+      "```bash\necho one\necho two\n```",
+      "```bash\necho hello\n\n```",
+      "```bash\necho one \\\n\necho two\n```",
     ]) {
       await rerender(message(text));
       expect(runButtons()).toHaveLength(1);
     }
 
     for (const text of [
-      "```bash\necho one\necho two\n```",
       "```typescript\necho hello\n```",
       "```bash\n\n```",
-      "```bash\necho hello\n\n```",
       "```bash\necho hello\\\n```",
-      "```bash\necho one \\\n\necho two\n```",
       "```powershell\necho one \\\necho two\n```",
       "```bash\necho safe \u202e#\n```",
+      "```bash\necho safe\n\u001b[2J\n```",
+      "```bash\necho safe\n\tunsafe-completion\n```",
       "```bash\necho incomplete",
       "~~~bash\necho incomplete",
       "````bash\necho incomplete\n```",
