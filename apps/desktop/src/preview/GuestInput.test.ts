@@ -1,3 +1,4 @@
+import * as NodeEvents from "node:events";
 import * as NodeVM from "node:vm";
 
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -37,6 +38,166 @@ const makeGuest = ({
 };
 
 describe("preview guest input", () => {
+  it.each([
+    { kind: "TEXTAREA", outcome: "blur" },
+    { kind: "INPUT", outcome: "blur" },
+    { kind: "contenteditable", outcome: "blur" },
+    { kind: "shadow", outcome: "blur" },
+    { kind: "TEXTAREA", outcome: "abort" },
+    { kind: "TEXTAREA", outcome: "navigation" },
+    { kind: "TEXTAREA", outcome: "timeout" },
+    { kind: "TEXTAREA", outcome: "removal" },
+  ])(
+    "waits for the host $kind and handles $outcome without dispatching input",
+    async ({ kind, outcome }) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+      const editor = {
+        tagName: kind,
+        isContentEditable: kind === "contenteditable" || kind === "shadow",
+      };
+      const document = Object.assign(new EventTarget(), {
+        activeElement: kind === "shadow" ? { shadowRoot: { activeElement: editor } } : editor,
+        documentElement: {},
+      });
+      const observed = Promise.withResolvers<void>();
+      const disconnect = vi.fn();
+      let mutation = () => {};
+      const context = NodeVM.createContext({
+        document,
+        queueMicrotask,
+        MutationObserver: class {
+          constructor(callback: () => void) {
+            mutation = callback;
+          }
+          observe() {
+            observed.resolve();
+          }
+          disconnect = disconnect;
+        },
+      });
+      const host = Object.assign(new NodeEvents.EventEmitter(), {
+        isDestroyed: () => false,
+        executeJavaScript: async (script: string) => NodeVM.runInContext(script, context),
+      });
+      const sendCommand = vi.fn(async () => ({}));
+      const guest = { hostWebContents: host, focusedFrame: null };
+      const controller = new AbortController();
+      let finished = false;
+      const wait = sendPageCommand(
+        guest as unknown as Electron.WebContents,
+        { sendCommand } as unknown as Electron.Debugger,
+        "T3.waitForHostInput",
+        { timeoutMs: 1000 },
+        undefined,
+        controller.signal,
+      ).then(() => {
+        finished = true;
+      });
+      await observed.promise;
+      expect(finished).toBe(false);
+      expect(sendCommand).not.toHaveBeenCalled();
+      // Moving between editors must not release a pending click.
+      document.dispatchEvent(new Event("focusout"));
+      await Promise.resolve();
+      expect(finished).toBe(false);
+      if (["abort", "navigation", "timeout"].includes(outcome)) {
+        const rejected = expect(wait).rejects.toThrow(/cancelled|Timed out/);
+        if (outcome === "abort") controller.abort();
+        else if (outcome === "navigation") host.emit("did-navigate");
+        else await vi.advanceTimersByTimeAsync(1000);
+        await rejected;
+      } else {
+        document.activeElement = { tagName: "BUTTON", isContentEditable: false };
+        if (outcome === "removal") mutation();
+        else document.dispatchEvent(new Event("focusout"));
+        await wait;
+      }
+      expect(disconnect).toHaveBeenCalledOnce();
+      expect(host.eventNames()).toEqual([]);
+      expect(context["__t3PreviewInputWaiters"]).toBeUndefined();
+      expect(sendCommand).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ...["mousePressed", "mouseMoved", "mouseWheel", "touchStart", "touchMove"].map((type) => ({
+      type,
+      protectHostInput: true,
+    })),
+    { type: "mousePressed", protectHostInput: false },
+  ])(
+    "checks host input before $type, agent protection: $protectHostInput",
+    async ({ type, protectHostInput }) => {
+      const context = NodeVM.createContext({
+        document: { activeElement: { isContentEditable: true } },
+      });
+      const host = {
+        isDestroyed: () => false,
+        executeJavaScript: async (script: string) => NodeVM.runInContext(script, context),
+      };
+      const sendCommand = vi.fn(async () => ({}));
+      const result = sendPageCommand(
+        { hostWebContents: host, focusedFrame: null } as unknown as Electron.WebContents,
+        { sendCommand } as unknown as Electron.Debugger,
+        type.startsWith("touch") ? "Input.dispatchTouchEvent" : "Input.dispatchMouseEvent",
+        { type },
+        undefined,
+        undefined,
+        protectHostInput,
+      );
+      if (protectHostInput) {
+        await expect(result).rejects.toThrow("host input");
+        expect(sendCommand).not.toHaveBeenCalled();
+      } else {
+        await result;
+        expect(sendCommand).toHaveBeenCalledOnce();
+      }
+    },
+  );
+
+  it.each(["queued", "capturing"])(
+    "cancels a pointer %s before it reaches the guest",
+    async (phase) => {
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const host = {
+        isDestroyed: () => false,
+        executeJavaScript: async () => {
+          if (phase === "capturing") {
+            started.resolve();
+            await release.promise;
+          }
+        },
+      };
+      const guest = { hostWebContents: host, focusedFrame: null };
+      const sendCommand = vi.fn(async () => {
+        started.resolve();
+        await release.promise;
+        return {};
+      });
+      const controller = new AbortController();
+      const send = (type: string, signal?: AbortSignal) =>
+        sendPageCommand(
+          guest as unknown as Electron.WebContents,
+          { sendCommand } as unknown as Electron.Debugger,
+          "Input.dispatchMouseEvent",
+          { type },
+          undefined,
+          signal,
+        );
+      const first = phase === "queued" ? send("mouseMoved") : undefined;
+      const cancelled = send("mousePressed", controller.signal);
+      const rejected = expect(cancelled).rejects.toThrow();
+      await started.promise;
+      controller.abort();
+      release.resolve();
+      await first;
+      await rejected;
+      expect(sendCommand.mock.calls.length).toBe(phase === "queued" ? 1 : 0);
+    },
+  );
+
   it("types into an unfocused guest's own page, not the app's focused field", async () => {
     const guest = makeGuest({ focused: false });
     await guest.send("Input.insertText", { text: "pairing-code" });
