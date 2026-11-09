@@ -95,6 +95,7 @@ import {
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
+import { isAbsolutePath } from "@t3tools/shared/path";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
@@ -250,6 +251,7 @@ import { projectEnvironment } from "../../state/projects";
 import {
   needsWorkspaceBasenameLookup,
   pickWorkspaceBasenameMatch,
+  pickWorkspaceSuffixMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import {
@@ -2927,6 +2929,7 @@ export const ThreadFeed = memo(function ThreadFeed({
       const path = resolveFileLinkPath(props.workspaceRoot, presentation.path);
       if (path === null) return;
       const relativePath = resolveWorkspaceRelativeFilePath(props.workspaceRoot, path);
+      const isBasename = relativePath !== null && needsWorkspaceBasenameLookup(relativePath);
       const openAt = (target: string) => {
         if (request.signal.aborted) return;
         void Haptics.selectionAsync();
@@ -2941,10 +2944,11 @@ export const ThreadFeed = memo(function ThreadFeed({
         props.workspaceRoot &&
         relativePath &&
         !/[\\/]$/.test(presentation.path) &&
-        needsWorkspaceBasenameLookup(relativePath) &&
+        (isBasename || !isAbsolutePath(presentation.path)) &&
         readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
       ) {
-        const originalPath = resolveWorkspaceFilePath(props.workspaceRoot, relativePath);
+        const workspaceRoot = props.workspaceRoot;
+        const originalPath = resolveWorkspaceFilePath(workspaceRoot, relativePath);
         void executeAtomQuery(
           appAtomRegistry,
           projectEnvironment.searchEntries({
@@ -2960,9 +2964,11 @@ export const ThreadFeed = memo(function ThreadFeed({
         ).then(
           (result) => {
             const match =
-              result._tag === "Success"
-                ? pickWorkspaceBasenameMatch(relativePath, result.value.entries)
-                : null;
+              result._tag !== "Success"
+                ? null
+                : isBasename
+                  ? pickWorkspaceBasenameMatch(relativePath, result.value.entries)
+                  : pickWorkspaceSuffixMatch(relativePath, workspaceRoot, result.value.entries);
             if (!match || match === relativePath) {
               openAt(relativePath);
               return;
@@ -2978,7 +2984,8 @@ export const ThreadFeed = memo(function ThreadFeed({
             ).then(
               (metadata) =>
                 openAt(
-                  metadata._tag === "Success" && metadata.value?.kind !== "directory"
+                  metadata._tag === "Success" &&
+                    (isBasename ? metadata.value?.kind !== "directory" : metadata.value === null)
                     ? match
                     : relativePath,
                 ),

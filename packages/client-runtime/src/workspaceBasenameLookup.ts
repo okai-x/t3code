@@ -65,16 +65,35 @@ export function stripRepeatedWorkspacePrefix(relativePath: string, cwd: string):
   return null;
 }
 
+function workspacePathKey(cwd: string): (path: string) => string {
+  const caseInsensitive = isWindowsAbsolutePath(cwd);
+  return (path) => {
+    const normalized = path.replaceAll("\\", "/");
+    return caseInsensitive ? normalized.toLowerCase() : normalized;
+  };
+}
+
 export function pickStrippedWorkspaceMatch(
   strippedPath: string,
   cwd: string,
   entries: ReadonlyArray<WorkspaceEntryCandidate>,
 ): string | null {
-  const caseInsensitive = isWindowsAbsolutePath(cwd);
-  const key = (path: string) => {
-    const normalized = path.replaceAll("\\", "/");
-    return caseInsensitive ? normalized.toLowerCase() : normalized;
-  };
+  const key = workspacePathKey(cwd);
   const files = entries.filter((entry) => entry.kind === "file");
   return files.find((entry) => key(entry.path) === key(strippedPath))?.path ?? null;
+}
+
+// Agents cite paths from inside a package (`application/agent.py`); open one only when unambiguous.
+export function pickWorkspaceSuffixMatch(
+  partialPath: string,
+  cwd: string,
+  entries: ReadonlyArray<WorkspaceEntryCandidate>,
+): string | null {
+  const key = workspacePathKey(cwd);
+  const target = key(partialPath);
+  const matches = entries.filter((entry) => {
+    const path = key(entry.path);
+    return entry.kind === "file" && (path === target || path.endsWith(`/${target}`));
+  });
+  return matches.length === 1 ? (matches[0]?.path ?? null) : null;
 }
